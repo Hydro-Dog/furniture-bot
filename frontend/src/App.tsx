@@ -1,0 +1,894 @@
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import type { Key } from 'react';
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Input,
+  InputNumber,
+  Modal,
+  Space,
+  Spin,
+  Table,
+  Tabs,
+  Tag
+} from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+
+type ChatRole = 'user' | 'assistant';
+type DialogStep =
+  | 'first_contact'
+  | 'profile_ready'
+  | 'technical_brief_ready'
+  | 'specification_ready'
+  | 'estimate_ready'
+  | 'manager_review'
+  | 'completed';
+type DialogStatus = 'active' | 'needs_manager' | 'completed';
+
+interface ChatMessage {
+  role: ChatRole;
+  content: string;
+  createdAt: string;
+}
+
+interface SpecificationRow {
+  id: string;
+  section: string | null;
+  itemType: string | null;
+  name: string;
+  material: string | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  thicknessMm: number | null;
+  quantity: number;
+  edgeBanding: string | null;
+  unit: string;
+  notes: string | null;
+  source: string | null;
+  confidence: number | null;
+}
+
+interface EstimateLine {
+  rowId: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number | null;
+  total: number | null;
+  status: 'priced' | 'needs_price';
+}
+
+interface DialogContext {
+  messages: ChatMessage[];
+  profile: {
+    json: Record<string, unknown> | null;
+    summary: string | null;
+    raw: string | null;
+    generatedAt: string | null;
+  } | null;
+  technicalBrief: {
+    json: Record<string, unknown> | null;
+    raw: string | null;
+    generatedAt: string | null;
+  } | null;
+  specification: {
+    rows: SpecificationRow[];
+    raw: string | null;
+    generatedAt: string | null;
+    updatedAt: string | null;
+  } | null;
+  estimate: {
+    currency: 'RUB';
+    subtotal: number;
+    total: number;
+    isComplete: boolean;
+    lines: EstimateLine[];
+    missingPrices: string[];
+    calculatedAt: string | null;
+    notes: string[];
+  } | null;
+  workflow: {
+    errors: string[];
+    timestamps: Record<string, string>;
+    confidence: number | null;
+    missingData: string[];
+  };
+}
+
+interface DialogEntity {
+  id: string;
+  status: DialogStatus;
+  currentStep: DialogStep;
+  context: DialogContext;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AdminDialogListItem {
+  id: string;
+  status: DialogStatus;
+  currentStep: DialogStep;
+  clientName: string | null;
+  contact: string | null;
+  requestSummary: string | null;
+  estimateTotal: number | null;
+  estimateComplete: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PromptDebugReview {
+  dialogCount: number;
+  promptKeys: string[];
+  result: Record<string, unknown> | null;
+  raw: string;
+  generatedAt: string;
+}
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const DIALOG_STORAGE_KEY = 'furniture_bot_dialog_id';
+
+async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message =
+      typeof payload?.message === 'string'
+        ? payload.message
+        : Array.isArray(payload?.message)
+          ? payload.message.join(', ')
+          : 'API request failed';
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
+function postJson<T>(path: string, body?: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+}
+
+function putJson<T>(path: string, body: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: 'PUT',
+    body: JSON.stringify(body)
+  });
+}
+
+function deleteJson<T>(path: string): Promise<T> {
+  return requestJson<T>(path, { method: 'DELETE' });
+}
+
+function formatMoney(value: number | null | undefined): string {
+  if (typeof value !== 'number') {
+    return '—';
+  }
+  return `${value.toLocaleString('ru-RU')} ₽`;
+}
+
+function stepLabel(step: DialogStep): string {
+  const labels: Record<DialogStep, string> = {
+    first_contact: 'Первичный контакт',
+    profile_ready: 'Профайл',
+    technical_brief_ready: 'ТЗ',
+    specification_ready: 'Спецификация',
+    estimate_ready: 'Расчёт',
+    manager_review: 'Проверка',
+    completed: 'Завершён'
+  };
+  return labels[step];
+}
+
+function statusColor(status: DialogStatus): string {
+  if (status === 'needs_manager') {
+    return 'orange';
+  }
+  if (status === 'completed') {
+    return 'green';
+  }
+  return 'blue';
+}
+
+export default function App(): JSX.Element {
+  if (window.location.pathname.startsWith('/admin')) {
+    return <AdminPage />;
+  }
+
+  return <ChatPage />;
+}
+
+function ChatPage(): JSX.Element {
+  const [dialog, setDialog] = useState<DialogEntity | null>(null);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [replyLoading, setReplyLoading] = useState(false);
+  const [error, setError] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    void bootstrapDialog();
+  }, []);
+
+  async function bootstrapDialog() {
+    setLoading(true);
+    setError('');
+    const params = new URLSearchParams(window.location.search);
+    const queryDialogId = params.get('dialogId');
+    const storedDialogId = window.localStorage.getItem(DIALOG_STORAGE_KEY);
+    const existingId = queryDialogId || storedDialogId;
+
+    if (existingId) {
+      try {
+        const existingDialog = await requestJson<DialogEntity>(`/dialogs/${existingId}`);
+        setDialog(existingDialog);
+        persistDialogId(existingDialog.id);
+        setLoading(false);
+        return;
+      } catch {
+        window.localStorage.removeItem(DIALOG_STORAGE_KEY);
+      }
+    }
+
+    const newDialog = await postJson<DialogEntity>('/dialogs');
+    setDialog(newDialog);
+    persistDialogId(newDialog.id);
+    setLoading(false);
+  }
+
+  function persistDialogId(id: string) {
+    window.localStorage.setItem(DIALOG_STORAGE_KEY, id);
+    const nextUrl = `${window.location.pathname}?dialogId=${id}`;
+    window.history.replaceState(null, '', nextUrl);
+  }
+
+  async function createNewDialog() {
+    setLoading(true);
+    setError('');
+    setDraft('');
+    const newDialog = await postJson<DialogEntity>('/dialogs');
+    setDialog(newDialog);
+    persistDialogId(newDialog.id);
+    setLoading(false);
+  }
+
+  async function submitMessage(event?: FormEvent) {
+    event?.preventDefault();
+    const content = draft.trim();
+    if (!dialog || !content || replyLoading) {
+      return;
+    }
+
+    setDraft('');
+    setError('');
+    setReplyLoading(true);
+
+    try {
+      const result = await postJson<{ dialog: DialogEntity; assistantReply: string }>(
+        `/dialogs/${dialog.id}/messages`,
+        { content }
+      );
+      setDialog(result.dialog);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось получить ответ');
+    } finally {
+      setReplyLoading(false);
+      textareaRef.current?.focus();
+    }
+  }
+
+  if (loading || !dialog) {
+    return (
+      <main className="app-shell">
+        <div className="center-state"><Spin /></div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="workspace">
+        <Header
+          title="Салон корпусной мебели"
+          subtitle="CRM + бот первого контакта"
+          actions={(
+            <>
+              <Button href="/admin">Админка</Button>
+              <Button onClick={createNewDialog}>Новый диалог</Button>
+            </>
+          )}
+        />
+
+        {error ? <Alert className="error-alert" type="error" message={error} showIcon /> : null}
+
+        <div className="content-grid">
+          <section className="chat-panel" aria-label="Диалог с ассистентом">
+            <DialogStatusBar dialog={dialog} />
+            <MessageList messages={dialog.context.messages} replyLoading={replyLoading} />
+            <form className="composer" onSubmit={submitMessage}>
+              <Input.TextArea
+                ref={textareaRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitMessage();
+                  }
+                }}
+                placeholder="Введите сообщение клиента"
+                autoSize={{ minRows: 2, maxRows: 5 }}
+              />
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={!draft.trim() || replyLoading}
+                loading={replyLoading}
+              >
+                Отправить
+              </Button>
+            </form>
+          </section>
+
+          <aside className="profile-panel" aria-label="CRM-контекст">
+            <ContextTabs dialog={dialog} editable={false} onDialogChange={setDialog} />
+          </aside>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function AdminPage(): JSX.Element {
+  const [dialogs, setDialogs] = useState<AdminDialogListItem[]>([]);
+  const [selectedDialog, setSelectedDialog] = useState<DialogEntity | null>(null);
+  const [selectedDialogIds, setSelectedDialogIds] = useState<Key[]>([]);
+  const [promptReview, setPromptReview] = useState<PromptDebugReview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void loadDialogs();
+  }, []);
+
+  async function loadDialogs() {
+    setLoading(true);
+    setError('');
+    try {
+      const nextDialogs = await requestJson<AdminDialogListItem[]>('/admin/dialogs');
+      setDialogs(nextDialogs);
+      setSelectedDialogIds((currentIds) => {
+        const existingIds = new Set(nextDialogs.map((dialog) => dialog.id));
+        return currentIds.filter((id) => existingIds.has(String(id)));
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить диалоги');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openDialog(id: string) {
+    setDetailLoading(true);
+    setError('');
+    try {
+      setSelectedDialog(await requestJson<DialogEntity>(`/dialogs/${id}`));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось открыть диалог');
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function deleteDialog(id: string) {
+    Modal.confirm({
+      title: 'Удалить диалог?',
+      content: 'Диалог будет скрыт из админки. Для PoC это soft-delete в БД.',
+      okText: 'Удалить',
+      okButtonProps: { danger: true },
+      cancelText: 'Отмена',
+      onOk: async () => {
+        await deleteJson<{ ok: true }>(`/admin/dialogs/${id}`);
+        if (selectedDialog?.id === id) {
+          setSelectedDialog(null);
+        }
+        await loadDialogs();
+      }
+    });
+  }
+
+  async function analyzeSelectedDialogs() {
+    setError('');
+    setPromptReview(null);
+    setDebugLoading(true);
+
+    try {
+      const result = await postJson<PromptDebugReview>('/admin/debug/prompt-review', {
+        dialogIds: selectedDialogIds.map(String)
+      });
+      setPromptReview(result);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось выполнить анализ prompt’ов');
+    } finally {
+      setDebugLoading(false);
+    }
+  }
+
+  const columns: ColumnsType<AdminDialogListItem> = [
+    {
+      title: 'Обновлён',
+      dataIndex: 'updatedAt',
+      width: 150,
+      render: (value: string) => new Date(value).toLocaleString('ru-RU')
+    },
+    {
+      title: 'Шаг',
+      dataIndex: 'currentStep',
+      width: 150,
+      render: (value: DialogStep) => <Tag>{stepLabel(value)}</Tag>
+    },
+    {
+      title: 'Статус',
+      dataIndex: 'status',
+      width: 140,
+      render: (value: DialogStatus) => <Tag color={statusColor(value)}>{value}</Tag>
+    },
+    {
+      title: 'Клиент',
+      dataIndex: 'clientName',
+      width: 160,
+      render: (value: string | null) => value || '—'
+    },
+    {
+      title: 'Запрос',
+      dataIndex: 'requestSummary',
+      ellipsis: true,
+      render: (value: string | null) => value || '—'
+    },
+    {
+      title: 'Сумма',
+      dataIndex: 'estimateTotal',
+      width: 130,
+      render: (value: number | null) => formatMoney(value)
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 190,
+      render: (_, record) => (
+        <Space>
+          <Button size="small" onClick={() => void openDialog(record.id)}>Открыть</Button>
+          <Button size="small" danger onClick={() => void deleteDialog(record.id)}>Удалить</Button>
+        </Space>
+      )
+    }
+  ];
+
+  return (
+    <main className="app-shell admin-shell">
+      <section className="workspace">
+        <Header
+          title="Админка диалогов"
+          subtitle="Открытая PoC CRM-панель"
+          actions={(
+            <>
+              <Button href="/">Чат</Button>
+              <Button onClick={() => void loadDialogs()}>Обновить</Button>
+            </>
+          )}
+        />
+
+        {error ? <Alert className="error-alert" type="error" message={error} showIcon /> : null}
+
+        <section className="debug-panel">
+          <div className="debug-panel-header">
+            <div>
+              <p className="eyebrow">Debug</p>
+              <h2>Анализ диалогов и prompt’ов</h2>
+            </div>
+            <Space>
+              <Tag>{selectedDialogIds.length} выбрано</Tag>
+              <Button
+                type="primary"
+                loading={debugLoading}
+                disabled={selectedDialogIds.length === 0}
+                onClick={() => void analyzeSelectedDialogs()}
+              >
+                Анализировать выбранные
+              </Button>
+            </Space>
+          </div>
+          <p className="debug-description">
+            Выберите диалоги чекбоксами в таблице ниже. Backend отправит реальные контексты диалогов,
+            структуру pipeline и текущие prompt’ы всех этапов в OpenAI API, а здесь появятся рекомендации
+            по доработке prompt’ов.
+          </p>
+          {promptReview ? (
+            <div className="debug-result">
+              <Descriptions bordered size="small" column={3}>
+                <Descriptions.Item label="Диалогов">{promptReview.dialogCount}</Descriptions.Item>
+                <Descriptions.Item label="Prompt’ы">{promptReview.promptKeys.join(', ')}</Descriptions.Item>
+                <Descriptions.Item label="Сгенерировано">
+                  {new Date(promptReview.generatedAt).toLocaleString('ru-RU')}
+                </Descriptions.Item>
+              </Descriptions>
+              <JsonBlock value={promptReview.result} fallback={promptReview.raw} />
+            </div>
+          ) : null}
+        </section>
+
+        <div className="admin-grid">
+          <section className="table-panel">
+            <Table
+              rowKey="id"
+              loading={loading}
+              dataSource={dialogs}
+              columns={columns}
+              rowSelection={{
+                selectedRowKeys: selectedDialogIds,
+                onChange: setSelectedDialogIds
+              }}
+              pagination={{ pageSize: 10 }}
+              size="middle"
+              onRow={(record) => ({
+                onDoubleClick: () => void openDialog(record.id)
+              })}
+            />
+          </section>
+          <section className="detail-panel">
+            {detailLoading ? (
+              <div className="center-state"><Spin /></div>
+            ) : selectedDialog ? (
+              <>
+                <DialogStatusBar dialog={selectedDialog} />
+                <ContextTabs
+                  dialog={selectedDialog}
+                  editable
+                  onDialogChange={(nextDialog) => {
+                    setSelectedDialog(nextDialog);
+                    void loadDialogs();
+                  }}
+                />
+              </>
+            ) : (
+              <div className="profile-empty">Выберите диалог из таблицы.</div>
+            )}
+          </section>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Header(props: {
+  title: string;
+  subtitle: string;
+  actions: JSX.Element;
+}): JSX.Element {
+  return (
+    <header className="topbar">
+      <div>
+        <p className="eyebrow">{props.subtitle}</p>
+        <h1>{props.title}</h1>
+      </div>
+      <div className="topbar-actions">{props.actions}</div>
+    </header>
+  );
+}
+
+function DialogStatusBar(props: { dialog: DialogEntity }): JSX.Element {
+  return (
+    <div className="dialog-status">
+      <Tag color={statusColor(props.dialog.status)}>{props.dialog.status}</Tag>
+      <Tag>{stepLabel(props.dialog.currentStep)}</Tag>
+      <span>ID: {props.dialog.id}</span>
+    </div>
+  );
+}
+
+function MessageList(props: {
+  messages: ChatMessage[];
+  replyLoading?: boolean;
+}): JSX.Element {
+  return (
+    <div className="message-list">
+      {props.messages.map((message, index) => (
+        <article
+          className={`message ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
+          key={`${message.role}-${message.createdAt}-${index}`}
+        >
+          <span className="message-author">
+            {message.role === 'user' ? 'Клиент' : 'Ассистент'}
+          </span>
+          <p>{message.content}</p>
+        </article>
+      ))}
+      {props.replyLoading ? (
+        <article className="message message-assistant">
+          <span className="message-author">Ассистент</span>
+          <div className="typing-row">
+            <Spin size="small" />
+            <span>Пишет ответ</span>
+          </div>
+        </article>
+      ) : null}
+    </div>
+  );
+}
+
+function ContextTabs(props: {
+  dialog: DialogEntity;
+  editable: boolean;
+  onDialogChange: (dialog: DialogEntity) => void;
+}): JSX.Element {
+  return (
+    <Tabs
+      className="context-tabs"
+      items={[
+        {
+          key: 'chat',
+          label: 'Чат',
+          children: <MessageList messages={props.dialog.context.messages} />
+        },
+        {
+          key: 'profile',
+          label: 'Профайл',
+          children: <ProfileView dialog={props.dialog} editable={props.editable} onDialogChange={props.onDialogChange} />
+        },
+        {
+          key: 'brief',
+          label: 'ТЗ',
+          children: <TechnicalBriefView dialog={props.dialog} editable={props.editable} onDialogChange={props.onDialogChange} />
+        },
+        {
+          key: 'specification',
+          label: 'Спецификация',
+          children: <SpecificationEditor dialog={props.dialog} editable={props.editable} onDialogChange={props.onDialogChange} />
+        },
+        {
+          key: 'estimate',
+          label: 'Расчёт',
+          children: <EstimateView dialog={props.dialog} editable={props.editable} onDialogChange={props.onDialogChange} />
+        }
+      ]}
+    />
+  );
+}
+
+function ProfileView(props: {
+  dialog: DialogEntity;
+  editable: boolean;
+  onDialogChange: (dialog: DialogEntity) => void;
+}): JSX.Element {
+  const profile = props.dialog.context.profile;
+
+  async function regenerate() {
+    props.onDialogChange(await postJson<DialogEntity>(`/dialogs/${props.dialog.id}/profile/regenerate`));
+  }
+
+  return (
+    <div className="tab-content">
+      {props.editable ? <Button onClick={() => void regenerate()}>Перегенерировать профайл</Button> : null}
+      {profile ? (
+        <>
+          <JsonBlock value={profile.json} fallback={profile.raw} />
+          {profile.summary ? <pre className="summary-block">{profile.summary}</pre> : null}
+        </>
+      ) : (
+        <div className="profile-empty">Профайл появится после достаточного первичного контакта.</div>
+      )}
+    </div>
+  );
+}
+
+function TechnicalBriefView(props: {
+  dialog: DialogEntity;
+  editable: boolean;
+  onDialogChange: (dialog: DialogEntity) => void;
+}): JSX.Element {
+  const brief = props.dialog.context.technicalBrief;
+
+  async function regenerate() {
+    props.onDialogChange(await postJson<DialogEntity>(`/dialogs/${props.dialog.id}/technical-brief/regenerate`));
+  }
+
+  return (
+    <div className="tab-content">
+      {props.editable ? <Button onClick={() => void regenerate()}>Перегенерировать ТЗ</Button> : null}
+      {brief ? (
+        <JsonBlock value={brief.json} fallback={brief.raw} />
+      ) : (
+        <div className="profile-empty">Техническое ТЗ ещё не сформировано.</div>
+      )}
+    </div>
+  );
+}
+
+function SpecificationEditor(props: {
+  dialog: DialogEntity;
+  editable: boolean;
+  onDialogChange: (dialog: DialogEntity) => void;
+}): JSX.Element {
+  const [rows, setRows] = useState<SpecificationRow[]>(props.dialog.context.specification?.rows ?? []);
+
+  useEffect(() => {
+    setRows(props.dialog.context.specification?.rows ?? []);
+  }, [props.dialog.id, props.dialog.context.specification?.updatedAt, props.dialog.context.specification?.generatedAt]);
+
+  function updateRow(id: string, patch: Partial<SpecificationRow>) {
+    setRows((currentRows) => currentRows.map((row) => row.id === id ? { ...row, ...patch } : row));
+  }
+
+  async function regenerate() {
+    props.onDialogChange(await postJson<DialogEntity>(`/dialogs/${props.dialog.id}/specification/regenerate`));
+  }
+
+  async function save() {
+    props.onDialogChange(await putJson<DialogEntity>(`/dialogs/${props.dialog.id}/specification`, { rows }));
+  }
+
+  const columns: ColumnsType<SpecificationRow> = [
+    {
+      title: 'Раздел',
+      dataIndex: 'section',
+      width: 120,
+      render: (value, record) => props.editable
+        ? <Input value={value ?? ''} onChange={(event) => updateRow(record.id, { section: event.target.value || null })} />
+        : value || '—'
+    },
+    {
+      title: 'Тип',
+      dataIndex: 'itemType',
+      width: 120,
+      render: (value, record) => props.editable
+        ? <Input value={value ?? ''} onChange={(event) => updateRow(record.id, { itemType: event.target.value || null })} />
+        : value || '—'
+    },
+    {
+      title: 'Наименование',
+      dataIndex: 'name',
+      width: 220,
+      render: (value, record) => props.editable
+        ? <Input value={value} onChange={(event) => updateRow(record.id, { name: event.target.value })} />
+        : value
+    },
+    {
+      title: 'Материал',
+      dataIndex: 'material',
+      width: 180,
+      render: (value, record) => props.editable
+        ? <Input value={value ?? ''} onChange={(event) => updateRow(record.id, { material: event.target.value || null })} />
+        : value || '—'
+    },
+    {
+      title: 'ДxШxТ',
+      key: 'dimensions',
+      width: 230,
+      render: (_, record) => props.editable ? (
+        <Space.Compact>
+          <InputNumber value={record.lengthMm} min={0} placeholder="Д" onChange={(value) => updateRow(record.id, { lengthMm: value ?? null })} />
+          <InputNumber value={record.widthMm} min={0} placeholder="Ш" onChange={(value) => updateRow(record.id, { widthMm: value ?? null })} />
+          <InputNumber value={record.thicknessMm} min={0} placeholder="Т" onChange={(value) => updateRow(record.id, { thicknessMm: value ?? null })} />
+        </Space.Compact>
+      ) : `${record.lengthMm ?? '—'} x ${record.widthMm ?? '—'} x ${record.thicknessMm ?? '—'}`
+    },
+    {
+      title: 'Кол.',
+      dataIndex: 'quantity',
+      width: 90,
+      render: (value, record) => props.editable
+        ? <InputNumber value={value} min={0} onChange={(nextValue) => updateRow(record.id, { quantity: nextValue ?? 0 })} />
+        : value
+    },
+    {
+      title: 'Ед.',
+      dataIndex: 'unit',
+      width: 90,
+      render: (value, record) => props.editable
+        ? <Input value={value} onChange={(event) => updateRow(record.id, { unit: event.target.value })} />
+        : value
+    },
+    {
+      title: 'Примечание',
+      dataIndex: 'notes',
+      render: (value, record) => props.editable
+        ? <Input value={value ?? ''} onChange={(event) => updateRow(record.id, { notes: event.target.value || null })} />
+        : value || '—'
+    }
+  ];
+
+  return (
+    <div className="tab-content">
+      {props.editable ? (
+        <Space className="tab-actions">
+          <Button onClick={() => void regenerate()}>Перегенерировать спецификацию</Button>
+          <Button type="primary" onClick={() => void save()}>Сохранить правки</Button>
+        </Space>
+      ) : null}
+      <Table
+        rowKey="id"
+        dataSource={rows}
+        columns={columns}
+        pagination={false}
+        scroll={{ x: 1120 }}
+        size="small"
+        locale={{ emptyText: 'Спецификация ещё не сформирована.' }}
+      />
+    </div>
+  );
+}
+
+function EstimateView(props: {
+  dialog: DialogEntity;
+  editable: boolean;
+  onDialogChange: (dialog: DialogEntity) => void;
+}): JSX.Element {
+  const estimate = props.dialog.context.estimate;
+
+  async function recalculate() {
+    props.onDialogChange(await postJson<DialogEntity>(`/dialogs/${props.dialog.id}/estimate/recalculate`));
+  }
+
+  const columns: ColumnsType<EstimateLine> = [
+    { title: 'Позиция', dataIndex: 'name' },
+    { title: 'Кол.', dataIndex: 'quantity', width: 90 },
+    { title: 'Ед.', dataIndex: 'unit', width: 90 },
+    { title: 'Цена', dataIndex: 'unitPrice', width: 120, render: (value) => formatMoney(value) },
+    { title: 'Сумма', dataIndex: 'total', width: 120, render: (value) => formatMoney(value) },
+    {
+      title: 'Статус',
+      dataIndex: 'status',
+      width: 130,
+      render: (value) => <Tag color={value === 'priced' ? 'green' : 'orange'}>{value}</Tag>
+    }
+  ];
+
+  return (
+    <div className="tab-content">
+      {props.editable ? <Button onClick={() => void recalculate()}>Пересчитать цену</Button> : null}
+      {estimate ? (
+        <>
+          <Descriptions className="estimate-summary" bordered size="small" column={1}>
+            <Descriptions.Item label="Итого">{formatMoney(estimate.total)}</Descriptions.Item>
+            <Descriptions.Item label="Полный расчёт">{estimate.isComplete ? 'Да' : 'Нет'}</Descriptions.Item>
+            <Descriptions.Item label="Заметки">{estimate.notes.join(' ') || '—'}</Descriptions.Item>
+          </Descriptions>
+          <Table
+            rowKey="rowId"
+            dataSource={estimate.lines}
+            columns={columns}
+            pagination={false}
+            size="small"
+          />
+        </>
+      ) : (
+        <div className="profile-empty">Расчёт ещё не выполнен.</div>
+      )}
+    </div>
+  );
+}
+
+function JsonBlock(props: {
+  value: Record<string, unknown> | null;
+  fallback: string | null;
+}): JSX.Element {
+  const text = props.value ? JSON.stringify(props.value, null, 2) : props.fallback || '';
+
+  if (!text) {
+    return <div className="profile-empty">Нет данных.</div>;
+  }
+
+  return <pre className="json-block">{text}</pre>;
+}

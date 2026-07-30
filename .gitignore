@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+.DS_Store
+npm-debug.log*
