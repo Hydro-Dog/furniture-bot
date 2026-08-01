@@ -126,20 +126,77 @@ interface PromptDebugReview {
   generatedAt: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+interface AuthResponse {
+  user: {
+    id: string;
+    username: string;
+    roles: string[];
+  };
+  csrfToken: string;
+}
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const DIALOG_STORAGE_KEY = 'furniture_bot_dialog_id';
 
-async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
+function readCookie(name: string): string {
+  const item = document.cookie
+    .split('; ')
+    .find((part) => part.startsWith(`${name}=`));
+  return item ? decodeURIComponent(item.slice(name.length + 1)) : '';
+}
+
+async function refreshAuthSession(): Promise<boolean> {
+  const csrfToken = readCookie('csrf_token');
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+    }
+  });
+
+  return response.ok;
+}
+
+function redirectToLogin(): void {
+  if (window.location.pathname === '/login') {
+    return;
+  }
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  window.location.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+}
+
+async function requestJson<T>(
+  path: string,
+  options: RequestInit = {},
+  retryOnUnauthorized = true
+): Promise<T> {
+  const csrfToken = readCookie('csrf_token');
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
       ...(options.headers || {})
     }
   });
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
+    const canRefresh = response.status === 401
+      && retryOnUnauthorized
+      && path !== '/auth/login'
+      && path !== '/auth/refresh';
+    if (canRefresh && await refreshAuthSession()) {
+      return requestJson<T>(path, options, false);
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      redirectToLogin();
+    }
+
     const message =
       typeof payload?.message === 'string'
         ? payload.message
@@ -201,11 +258,102 @@ function statusColor(status: DialogStatus): string {
 }
 
 export default function App(): JSX.Element {
+  if (window.location.pathname === '/login') {
+    return <LoginPage />;
+  }
+
+  return <ProtectedApp />;
+}
+
+function ProtectedApp(): JSX.Element {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        await requestJson<AuthResponse>('/auth/me');
+        setLoading(false);
+      } catch {
+        redirectToLogin();
+      }
+    }
+
+    void checkAuth();
+  }, []);
+
+  if (loading) {
+    return (
+      <main className="app-shell">
+        <div className="center-state"><Spin /></div>
+      </main>
+    );
+  }
+
   if (window.location.pathname.startsWith('/admin')) {
     return <AdminPage />;
   }
 
   return <ChatPage />;
+}
+
+function LoginPage(): JSX.Element {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      await postJson<AuthResponse>('/auth/login', { username, password });
+      const params = new URLSearchParams(window.location.search);
+      window.location.replace(params.get('returnTo') || '/');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось войти');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="login-shell">
+      <form className="login-panel" onSubmit={submit}>
+        <div>
+          <h1>Вход в CRM</h1>
+          <p>Доступ только для администратора салона</p>
+        </div>
+        {error ? <Alert type="error" message={error} showIcon /> : null}
+        <Input
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          placeholder="Логин"
+          autoComplete="username"
+        />
+        <Input.Password
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="Пароль"
+          autoComplete="current-password"
+        />
+        <Button
+          type="primary"
+          htmlType="submit"
+          loading={loading}
+          disabled={!username.trim() || !password}
+        >
+          Войти
+        </Button>
+      </form>
+    </main>
+  );
+}
+
+async function logout() {
+  await postJson<void>('/auth/logout').catch(() => undefined);
+  window.location.replace('/login');
 }
 
 function ChatPage(): JSX.Element {
@@ -305,6 +453,7 @@ function ChatPage(): JSX.Element {
             <>
               <Button href="/admin">Админка</Button>
               <Button onClick={createNewDialog}>Новый диалог</Button>
+              <Button onClick={() => void logout()}>Выйти</Button>
             </>
           )}
         />
@@ -486,6 +635,7 @@ function AdminPage(): JSX.Element {
             <>
               <Button href="/">Чат</Button>
               <Button onClick={() => void loadDialogs()}>Обновить</Button>
+              <Button onClick={() => void logout()}>Выйти</Button>
             </>
           )}
         />

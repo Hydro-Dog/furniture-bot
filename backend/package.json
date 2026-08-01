@@ -6,29 +6,39 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
-    "start:dev": "nest start --watch"
+    "start:dev": "nest start --watch",
+    "start:with-migrate": "node dist/db/scripts/migrate.js && node dist/main.js",
+    "db:migrate": "ts-node src/db/scripts/migrate.ts",
+    "db:migrate:undo": "ts-node src/db/scripts/migrate-undo.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.18",
     "@nestjs/core": "^11.1.18",
     "@nestjs/platform-express": "^11.1.18",
     "@nestjs/sequelize": "^11.0.1",
+    "argon2": "^0.45.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
     "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
     "openai": "^4.86.1",
     "pg": "^8.22.0",
     "pg-hstore": "^2.3.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "sequelize": "^6.37.8",
-    "sequelize-typescript": "^2.1.6"
+    "sequelize-typescript": "^2.1.6",
+    "umzug": "^3.8.3"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
     "@nestjs/schematics": "^11.0.7",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.17.47",
+    "ts-node": "^10.9.2",
     "typescript": "^5.6.3"
   }
 }

@@ -21,6 +21,38 @@ body {
   padding: 24px;
 }
 
+.login-shell {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-panel {
+  background: #fff;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(36, 48, 66, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 380px;
+  padding: 24px;
+  width: 100%;
+}
+
+.login-panel h1 {
+  font-size: 24px;
+}
+
+.login-panel p {
+  color: #657487;
+  line-height: 1.45;
+  margin: 8px 0 0;
+}
+
 .workspace {
   display: flex;
   flex-direction: column;
