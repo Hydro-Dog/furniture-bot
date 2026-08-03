@@ -178,6 +178,7 @@ interface AuthResponse {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const DIALOG_STORAGE_KEY = 'furniture_bot_dialog_id';
+const DEFAULT_AUTHENTICATED_PATH = '/admin';
 
 function readCookie(name: string): string {
   const item = document.cookie
@@ -305,6 +306,14 @@ function normalizePublicUrl(url: string): string {
   return `${window.location.origin}${url}`;
 }
 
+function normalizeLoginReturnTo(value: string | null): string {
+  if (!value || value === '/' || value.startsWith('/login') || !value.startsWith('/') || value.startsWith('//')) {
+    return DEFAULT_AUTHENTICATED_PATH;
+  }
+
+  return value;
+}
+
 export default function App(): JSX.Element {
   if (window.location.pathname.startsWith('/public/')) {
     return <PublicDialogPage />;
@@ -341,6 +350,15 @@ function ProtectedApp(): JSX.Element {
     );
   }
 
+  if (window.location.pathname === '/') {
+    window.location.replace(DEFAULT_AUTHENTICATED_PATH);
+    return (
+      <main className="app-shell">
+        <div className="center-state"><Spin /></div>
+      </main>
+    );
+  }
+
   if (window.location.pathname === '/admin/_prompt-vault') {
     return <PromptVaultPage />;
   }
@@ -366,7 +384,7 @@ function LoginPage(): JSX.Element {
     try {
       await postJson<AuthResponse>('/auth/login', { username, password });
       const params = new URLSearchParams(window.location.search);
-      window.location.replace(params.get('returnTo') || '/');
+      window.location.replace(normalizeLoginReturnTo(params.get('returnTo')));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось войти');
     } finally {
