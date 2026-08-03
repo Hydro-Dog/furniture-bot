@@ -97,18 +97,27 @@ export class OpenAiClientService {
     }
 
     this.debugProxyRequest(targetUrl, proxyApplied);
+    const startedAt = Date.now();
 
     try {
       const response = await fetch(targetUrl, request);
-      const payload = await response.json().catch(() => null) as ResponsesApiResult | null;
+      const rawPayload = await response.text().catch(() => '');
+      const payload = this.parseJsonPayload(rawPayload);
 
       if (!response.ok) {
         const message = payload?.error?.message || 'OpenAI API request failed';
+        this.logOpenAiHttpFailure(response, rawPayload, targetUrl, proxyApplied, startedAt);
         throw new ServiceUnavailableException(this.sanitizeOpenAiMessage(message));
       }
 
       const text = this.extractOutputText(payload);
       if (!text) {
+        this.logger.error(
+          this.formatOpenAiLogLine('openai_empty_response', targetUrl, proxyApplied, startedAt, [
+            `status=${response.status}`,
+            `response_body=${this.formatLogValue(this.truncateForLog(this.sanitizeOpenAiMessage(rawPayload || 'empty'), 500))}`
+          ])
+        );
         throw new ServiceUnavailableException('OpenAI API returned an empty response');
       }
 
@@ -119,9 +128,22 @@ export class OpenAiClientService {
       }
 
       const message = error instanceof Error ? error.message : 'OpenAI API request failed';
+      this.logOpenAiTransportFailure(error, targetUrl, proxyApplied, startedAt);
       throw new ServiceUnavailableException(this.sanitizeOpenAiMessage(message));
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private parseJsonPayload(rawPayload: string): ResponsesApiResult | null {
+    if (!rawPayload) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(rawPayload) as ResponsesApiResult;
+    } catch {
+      return null;
     }
   }
 
@@ -170,6 +192,100 @@ export class OpenAiClientService {
 
   private sanitizeOpenAiMessage(message: string): string {
     return message.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***');
+  }
+
+  private logOpenAiHttpFailure(
+    response: Response,
+    rawPayload: string,
+    targetUrl: string,
+    proxyApplied: boolean,
+    startedAt: number
+  ): void {
+    this.logger.error(
+      this.formatOpenAiLogLine('openai_http_error', targetUrl, proxyApplied, startedAt, [
+        `status=${response.status}`,
+        `status_text=${this.formatLogValue(response.statusText || 'none')}`,
+        `response_body=${this.formatLogValue(this.truncateForLog(this.sanitizeOpenAiMessage(rawPayload), 700))}`
+      ])
+    );
+  }
+
+  private logOpenAiTransportFailure(
+    error: unknown,
+    targetUrl: string,
+    proxyApplied: boolean,
+    startedAt: number
+  ): void {
+    this.logger.error(
+      this.formatOpenAiLogLine('openai_transport_error', targetUrl, proxyApplied, startedAt, [
+        ...this.describeError(error)
+      ])
+    );
+  }
+
+  private formatOpenAiLogLine(
+    event: string,
+    targetUrl: string,
+    proxyApplied: boolean,
+    startedAt: number,
+    parts: string[]
+  ): string {
+    const target = new URL(targetUrl);
+
+    return [
+      '[OPENAI_CLIENT]',
+      event,
+      `target=${target.host}${target.pathname}`,
+      `openai_use_proxy=${this.useProxy}`,
+      `proxy_applied=${proxyApplied}`,
+      `proxy_endpoint=${this.proxyEndpointForLog()}`,
+      `timeout_ms=${this.outboundTimeoutMs}`,
+      `duration_ms=${Date.now() - startedAt}`,
+      ...parts
+    ].join(' ');
+  }
+
+  private describeError(error: unknown): string[] {
+    const parts: string[] = [];
+    let current: unknown = error;
+
+    for (let depth = 0; depth < 4 && current; depth += 1) {
+      const prefix = depth === 0 ? 'error' : `cause_${depth}`;
+      const record = typeof current === 'object' && current !== null
+        ? current as Record<string, unknown>
+        : null;
+
+      if (current instanceof Error) {
+        parts.push(`${prefix}_name=${this.formatLogValue(current.name)}`);
+        parts.push(`${prefix}_message=${this.formatLogValue(this.sanitizeOpenAiMessage(current.message))}`);
+      } else {
+        parts.push(`${prefix}_value=${this.formatLogValue(String(current))}`);
+      }
+
+      for (const field of ['code', 'errno', 'syscall', 'address', 'port']) {
+        const value = record?.[field];
+        if (typeof value === 'string' || typeof value === 'number') {
+          parts.push(`${prefix}_${field}=${this.formatLogValue(String(value))}`);
+        }
+      }
+
+      current = record?.cause;
+    }
+
+    return parts;
+  }
+
+  private formatLogValue(value: string): string {
+    const normalized = value.replace(/\s+/g, ' ').trim() || 'empty';
+    return JSON.stringify(this.truncateForLog(normalized, 900));
+  }
+
+  private truncateForLog(value: string, maxLength: number): string {
+    if (value.length <= maxLength) {
+      return value;
+    }
+
+    return `${value.slice(0, maxLength)}...`;
   }
 
   private resolveProxyUrl(): string | null {
@@ -250,10 +366,22 @@ export class OpenAiClientService {
         `target=${target.host}${target.pathname}`,
         `openai_use_proxy=${this.useProxy}`,
         `proxy_applied=${proxyApplied}`,
-        `proxy_endpoint=${this.proxyUrl ? new URL(this.proxyUrl).host : 'none'}`,
+        `proxy_endpoint=${this.proxyEndpointForLog()}`,
         `timeout_ms=${this.outboundTimeoutMs}`
       ].join(' ')
     );
+  }
+
+  private proxyEndpointForLog(): string {
+    if (!this.proxyUrl) {
+      return 'none';
+    }
+
+    try {
+      return new URL(this.proxyUrl).host;
+    } catch {
+      return 'invalid';
+    }
   }
 
   private readPositiveInt(rawValue: string | undefined, fallback: number): number {
