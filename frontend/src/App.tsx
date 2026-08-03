@@ -159,6 +159,14 @@ interface PromptDebugReview {
   generatedAt: string;
 }
 
+interface AppPromptEntity {
+  key: string;
+  content: string;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AuthResponse {
   user: {
     id: string;
@@ -331,6 +339,10 @@ function ProtectedApp(): JSX.Element {
         <div className="center-state"><Spin /></div>
       </main>
     );
+  }
+
+  if (window.location.pathname === '/admin/_prompt-vault') {
+    return <PromptVaultPage />;
   }
 
   if (window.location.pathname.startsWith('/admin')) {
@@ -1041,6 +1053,124 @@ function AdminPage(): JSX.Element {
             )}
           </section>
         </div>
+      </section>
+    </main>
+  );
+}
+
+function PromptVaultPage(): JSX.Element {
+  const [prompt, setPrompt] = useState<AppPromptEntity | null>(null);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void loadPrompt();
+  }, []);
+
+  async function loadPrompt() {
+    setLoading(true);
+    setError('');
+    setSaved(false);
+
+    try {
+      const result = await requestJson<AppPromptEntity>('/admin/prompts/main-chat-intake');
+      setPrompt(result);
+      setDraft(result.content);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить prompt');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function savePrompt() {
+    setSaving(true);
+    setError('');
+    setSaved(false);
+
+    try {
+      const result = await putJson<AppPromptEntity>('/admin/prompts/main-chat-intake', { content: draft });
+      setPrompt(result);
+      setDraft(result.content);
+      setSaved(true);
+      message.success('Prompt сохранён');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить prompt');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const hasChanges = Boolean(prompt && draft !== prompt.content);
+
+  return (
+    <main className="app-shell admin-shell">
+      <section className="workspace prompt-vault-workspace">
+        <Header
+          title="Редактор основного prompt’а"
+          subtitle="Текст ниже используется как system prompt в первом клиентском диалоге"
+          actions={(
+            <>
+              <Button href="/admin">Админка</Button>
+              <Button onClick={() => void loadPrompt()}>Обновить</Button>
+              <Button onClick={() => void logout()}>Выйти</Button>
+            </>
+          )}
+        />
+
+        {error ? <Alert className="error-alert" type="error" message={error} showIcon /> : null}
+
+        <section className="prompt-editor-panel">
+          {loading ? (
+            <div className="center-state"><Spin /></div>
+          ) : (
+            <>
+              {prompt ? (
+                <Descriptions bordered size="small" column={3}>
+                  <Descriptions.Item label="Ключ">{prompt.key}</Descriptions.Item>
+                  <Descriptions.Item label="Обновил">{prompt.updatedBy || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Обновлён">
+                    {new Date(prompt.updatedAt).toLocaleString('ru-RU')}
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : null}
+
+              <Input.TextArea
+                value={draft}
+                showCount
+                maxLength={50000}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setSaved(false);
+                }}
+                autoSize={{ minRows: 24, maxRows: 36 }}
+              />
+
+              <div className="prompt-editor-actions">
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={saving}
+                    disabled={!draft.trim() || !hasChanges}
+                    onClick={() => void savePrompt()}
+                  >
+                    Сохранить
+                  </Button>
+                  <Button disabled={!hasChanges || saving} onClick={() => setDraft(prompt?.content ?? '')}>
+                    Отменить изменения
+                  </Button>
+                </Space>
+                <Space>
+                  {hasChanges ? <Tag color="orange">Есть несохранённые изменения</Tag> : null}
+                  {saved ? <Tag color="green">Сохранено</Tag> : null}
+                </Space>
+              </div>
+            </>
+          )}
+        </section>
       </section>
     </main>
   );

@@ -1,5 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { UpdateFeedbackDto } from '../dialogs/dto/update-feedback.dto';
+import { AuthUser } from '../auth/types/auth.types';
+import { UpdateMainPromptDto } from '../prompts/dto/update-main-prompt.dto';
+import { PromptConfigService } from '../prompts/prompt-config.service';
 import { DEFAULT_OPENAI_RATE_LIMIT } from '../rate-limit/constants/rate-limit.constants';
 import { RateLimit } from '../rate-limit/decorators/rate-limit.decorator';
 import { AdminService } from './admin.service';
@@ -10,7 +14,8 @@ import { PromptDebugService } from './prompt-debug.service';
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly promptDebugService: PromptDebugService
+    private readonly promptDebugService: PromptDebugService,
+    private readonly promptConfigService: PromptConfigService
   ) {}
 
   @Get('dialogs')
@@ -36,6 +41,22 @@ export class AdminController {
   @Put('dialogs/:id/feedback')
   updateFeedback(@Param('id') id: string, @Body() body: UpdateFeedbackDto) {
     return this.adminService.updateFeedback(id, body.feedback);
+  }
+
+  @Get('prompts/main-chat-intake')
+  getMainChatIntakePrompt() {
+    return this.promptConfigService.getMainChatIntakePrompt();
+  }
+
+  @Put('prompts/main-chat-intake')
+  updateMainChatIntakePrompt(
+    @Body() body: UpdateMainPromptDto,
+    @Req() request: Request & { user?: AuthUser }
+  ) {
+    return this.promptConfigService.updateMainChatIntakePrompt(
+      body.content,
+      request.user?.username ?? 'admin'
+    );
   }
 
   @RateLimit(DEFAULT_OPENAI_RATE_LIMIT)

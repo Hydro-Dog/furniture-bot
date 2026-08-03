@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CLIENT_PROFILE_PROMPT, FIRST_CONTACT_SYSTEM_PROMPT } from '../chat-intake/prompts';
+import { CLIENT_PROFILE_PROMPT } from '../chat-intake/prompts';
 import { DialogsService } from '../dialogs/dialogs.service';
 import { OpenAiClientService } from '../llm/openai-client.service';
+import { PromptConfigService } from '../prompts/prompt-config.service';
 import { SPECIFICATION_PROMPT } from '../specification/specification.service';
 import { TECHNICAL_BRIEF_PROMPT } from '../technical-brief/technical-brief.service';
 import { parseAiJsonAndSummary } from '../workflow/json-extract.utils';
@@ -45,7 +46,8 @@ const PROMPT_REVIEW_SYSTEM_PROMPT = `
 export class PromptDebugService {
   constructor(
     private readonly dialogsService: DialogsService,
-    private readonly openAiClientService: OpenAiClientService
+    private readonly openAiClientService: OpenAiClientService,
+    private readonly promptConfigService: PromptConfigService
   ) {}
 
   async reviewPrompts(dialogIds: string[]) {
@@ -90,7 +92,7 @@ export class PromptDebugService {
               ]
             },
             prompts: {
-              chat_intake: FIRST_CONTACT_SYSTEM_PROMPT,
+              chat_intake: await this.promptConfigService.getMainChatIntakePromptContent(),
               client_profile: CLIENT_PROFILE_PROMPT,
               technical_brief: TECHNICAL_BRIEF_PROMPT,
               specification: SPECIFICATION_PROMPT

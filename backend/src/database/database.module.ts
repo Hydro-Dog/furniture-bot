@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { SequelizeModule } from '@nestjs/sequelize';
 import { DialogModel } from '../dialogs/dialog.model';
+import { AppPromptModel } from '../prompts/app-prompt.model';
 import { getDatabaseConfig } from './database.config';
 
 @Module({
@@ -16,7 +17,7 @@ import { getDatabaseConfig } from './database.config';
           username: dbConfig.username,
           password: dbConfig.password,
           database: dbConfig.database,
-          models: [DialogModel],
+          models: [DialogModel, AppPromptModel],
           autoLoadModels: false,
           synchronize: false,
           logging: false
