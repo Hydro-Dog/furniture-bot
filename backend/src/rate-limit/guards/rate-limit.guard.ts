@@ -102,6 +102,10 @@ export class RateLimitGuard implements CanActivate {
       return `${ip}:${request.params?.id || 'unknown'}`;
     }
 
+    if (keyMode === 'ip_public_token') {
+      return `${ip}:${request.params?.token || 'unknown'}`;
+    }
+
     return ip;
   }
 

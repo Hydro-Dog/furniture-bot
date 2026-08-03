@@ -45,6 +45,27 @@ export class DialogModel extends Model {
   })
   declare context: DialogContext;
 
+  @Column({ type: DataType.UUID, allowNull: true, field: 'public_access_token_id' })
+  declare publicAccessTokenId: string | null;
+
+  @Column({ type: DataType.TEXT, allowNull: true, field: 'public_access_token_hash' })
+  declare publicAccessTokenHash: string | null;
+
+  @Column({ type: DataType.DATE, allowNull: true, field: 'public_access_expires_at' })
+  declare publicAccessExpiresAt: Date | null;
+
+  @Column({ type: DataType.DATE, allowNull: true, field: 'public_access_created_at' })
+  declare publicAccessCreatedAt: Date | null;
+
+  @Column({ type: DataType.TEXT, allowNull: true, field: 'public_feedback' })
+  declare publicFeedback: string | null;
+
+  @Column({ type: DataType.DATE, allowNull: true, field: 'public_feedback_updated_at' })
+  declare publicFeedbackUpdatedAt: Date | null;
+
+  @Column({ type: DataType.TEXT, allowNull: true, field: 'public_feedback_updated_by' })
+  declare publicFeedbackUpdatedBy: string | null;
+
   @CreatedAt
   @Column({ type: DataType.DATE, field: 'created_at' })
   declare createdAt: Date;

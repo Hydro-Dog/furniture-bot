@@ -96,7 +96,32 @@ export interface DialogEntity {
   status: DialogStatus;
   currentStep: DialogStep;
   context: DialogContext;
+  publicAccess: {
+    url: string | null;
+    createdAt: string | null;
+    expiresAt: string | null;
+    isActive: boolean;
+  } | null;
+  publicFeedback: {
+    text: string | null;
+    updatedAt: string | null;
+    updatedBy: string | null;
+  };
   createdAt: string;
   updatedAt: string;
 }
 
+export interface PublicDialogEntity {
+  status: DialogStatus;
+  currentStep: DialogStep;
+  messages: ChatMessage[];
+  feedback: string | null;
+  expiresAt: string;
+  updatedAt: string;
+}
+
+export interface PublicDialogLinkResult {
+  dialog: DialogEntity;
+  publicUrl: string;
+  expiresAt: string;
+}

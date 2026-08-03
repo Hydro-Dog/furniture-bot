@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { DialogsModule } from './dialogs/dialogs.module';
 import { PricingModule } from './pricing/pricing.module';
 import { ProfileModule } from './profile/profile.module';
+import { PublicDialogsModule } from './public-dialogs/public-dialogs.module';
 import { RateLimitGuard } from './rate-limit/guards/rate-limit.guard';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { SpecificationModule } from './specification/specification.module';
@@ -28,6 +29,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     SpecificationModule,
     PricingModule,
     WorkflowModule,
+    PublicDialogsModule,
     AdminModule
   ],
   providers: [

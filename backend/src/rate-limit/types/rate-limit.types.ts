@@ -1,4 +1,4 @@
-export type RateLimitKeyMode = 'ip' | 'ip_username' | 'ip_dialog';
+export type RateLimitKeyMode = 'ip' | 'ip_username' | 'ip_dialog' | 'ip_public_token';
 
 export interface RateLimitPolicy {
   limit: number;

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import type { Key } from 'react';
 import {
   Alert,
@@ -96,13 +96,43 @@ interface DialogContext {
   };
 }
 
+interface PublicAccessInfo {
+  url: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  isActive: boolean;
+}
+
+interface PublicFeedbackInfo {
+  text: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
 interface DialogEntity {
   id: string;
   status: DialogStatus;
   currentStep: DialogStep;
   context: DialogContext;
+  publicAccess: PublicAccessInfo | null;
+  publicFeedback: PublicFeedbackInfo;
   createdAt: string;
   updatedAt: string;
+}
+
+interface PublicDialogEntity {
+  status: DialogStatus;
+  currentStep: DialogStep;
+  messages: ChatMessage[];
+  feedback: string | null;
+  expiresAt: string;
+  updatedAt: string;
+}
+
+interface PublicDialogLinkResult {
+  dialog: DialogEntity;
+  publicUrl: string;
+  expiresAt: string;
 }
 
 interface AdminDialogListItem {
@@ -114,6 +144,8 @@ interface AdminDialogListItem {
   requestSummary: string | null;
   estimateTotal: number | null;
   estimateComplete: boolean;
+  publicAccess: PublicAccessInfo | null;
+  publicFeedback: PublicFeedbackInfo;
   createdAt: string;
   updatedAt: string;
 }
@@ -257,7 +289,18 @@ function statusColor(status: DialogStatus): string {
   return 'blue';
 }
 
+function normalizePublicUrl(url: string): string {
+  if (/^https?:\/\//.test(url)) {
+    return url;
+  }
+  return `${window.location.origin}${url}`;
+}
+
 export default function App(): JSX.Element {
+  if (window.location.pathname.startsWith('/public/')) {
+    return <PublicDialogPage />;
+  }
+
   if (window.location.pathname === '/login') {
     return <LoginPage />;
   }
@@ -498,6 +541,178 @@ function ChatPage(): JSX.Element {
   );
 }
 
+function PublicDialogPage(): JSX.Element {
+  const token = decodeURIComponent(window.location.pathname.replace(/^\/public\//, ''));
+  const [dialog, setDialog] = useState<PublicDialogEntity | null>(null);
+  const [draft, setDraft] = useState('');
+  const [feedback, setFeedback] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [replyLoading, setReplyLoading] = useState(false);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackSaved, setFeedbackSaved] = useState(false);
+  const [error, setError] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    async function loadPublicDialog() {
+      setLoading(true);
+      setError('');
+      try {
+        const result = await requestJson<PublicDialogEntity>(`/public/dialogs/${encodeURIComponent(token)}`);
+        setDialog(result);
+        setFeedback(result.feedback ?? '');
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : 'Не удалось открыть тестовую ссылку');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void loadPublicDialog();
+  }, [token]);
+
+  async function submitMessage(event?: FormEvent) {
+    event?.preventDefault();
+    const content = draft.trim();
+    if (!content || replyLoading) {
+      return;
+    }
+
+    setDraft('');
+    setError('');
+    setReplyLoading(true);
+
+    try {
+      const result = await postJson<{ dialog: PublicDialogEntity; assistantReply: string }>(
+        `/public/dialogs/${encodeURIComponent(token)}/messages`,
+        { content }
+      );
+      setDialog(result.dialog);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось получить ответ');
+    } finally {
+      setReplyLoading(false);
+      textareaRef.current?.focus();
+    }
+  }
+
+  async function saveFeedback() {
+    setFeedbackSaving(true);
+    setFeedbackSaved(false);
+    setError('');
+
+    try {
+      const result = await putJson<PublicDialogEntity>(
+        `/public/dialogs/${encodeURIComponent(token)}/feedback`,
+        { feedback }
+      );
+      setDialog(result);
+      setFeedback(result.feedback ?? '');
+      setFeedbackSaved(true);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить feedback');
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <main className="app-shell public-shell">
+        <div className="center-state"><Spin /></div>
+      </main>
+    );
+  }
+
+  if (!dialog) {
+    return (
+      <main className="app-shell public-shell">
+        <section className="workspace public-workspace">
+          <Alert
+            type="error"
+            message="Тестовая ссылка недоступна"
+            description={error || 'Ссылка не найдена или срок её действия истёк.'}
+            showIcon
+          />
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell public-shell">
+      <section className="workspace public-workspace">
+        <Header
+          title="Тестовый диалог с ИИ-консультантом"
+          subtitle="Салон корпусной мебели"
+          actions={<Tag color="blue">Ссылка действует 4 часа с момента создания</Tag>}
+        />
+
+        {error ? <Alert className="error-alert" type="error" message={error} showIcon /> : null}
+
+        <section className="public-chat-layout">
+          <div className="chat-panel" aria-label="Тестовый диалог">
+            <div className="dialog-status">
+              <Tag color={statusColor(dialog.status)}>{dialog.status}</Tag>
+              <Tag>{stepLabel(dialog.currentStep)}</Tag>
+              <span>Действует до {new Date(dialog.expiresAt).toLocaleString('ru-RU')}</span>
+            </div>
+            <MessageList messages={dialog.messages} replyLoading={replyLoading} />
+            <form className="composer" onSubmit={submitMessage}>
+              <Input.TextArea
+                ref={textareaRef}
+                value={draft}
+                maxLength={2000}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitMessage();
+                  }
+                }}
+                placeholder="Введите сообщение"
+                autoSize={{ minRows: 2, maxRows: 5 }}
+              />
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={!draft.trim() || replyLoading}
+                loading={replyLoading}
+              >
+                Отправить
+              </Button>
+            </form>
+          </div>
+
+          <section className="feedback-panel" aria-label="Feedback">
+            <div>
+              <p className="eyebrow">Feedback</p>
+              <h2>Впечатления от теста</h2>
+            </div>
+            <Input.TextArea
+              value={feedback}
+              maxLength={4000}
+              showCount
+              onChange={(event) => {
+                setFeedback(event.target.value);
+                setFeedbackSaved(false);
+              }}
+              placeholder="Опишите свои впечатления от общения с ботом"
+              autoSize={{ minRows: 6, maxRows: 12 }}
+            />
+            <Space>
+              <Button type="primary" loading={feedbackSaving} onClick={() => void saveFeedback()}>
+                Сохранить feedback
+              </Button>
+              {feedbackSaved ? <Tag color="green">Сохранено</Tag> : null}
+            </Space>
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
 function AdminPage(): JSX.Element {
   const [dialogs, setDialogs] = useState<AdminDialogListItem[]>([]);
   const [selectedDialog, setSelectedDialog] = useState<DialogEntity | null>(null);
@@ -575,6 +790,55 @@ function AdminPage(): JSX.Element {
     }
   }
 
+  function showPublicLink(url: string, expiresAt: string) {
+    const normalizedUrl = normalizePublicUrl(url);
+    Modal.info({
+      title: 'Тестовая ссылка создана',
+      width: 680,
+      content: (
+        <div className="modal-link-content">
+          <p>Ссылка действует 4 часа с момента создания, до {new Date(expiresAt).toLocaleString('ru-RU')}.</p>
+          <Input readOnly value={normalizedUrl} onFocus={(event) => event.currentTarget.select()} />
+        </div>
+      )
+    });
+  }
+
+  async function createTestDialogLink() {
+    setError('');
+    try {
+      const result = await postJson<PublicDialogLinkResult>('/admin/test-dialog-links');
+      setSelectedDialog(result.dialog);
+      showPublicLink(result.publicUrl, result.expiresAt);
+      await loadDialogs();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось создать тестовую ссылку');
+    }
+  }
+
+  async function createDialogTestLink(id: string) {
+    setError('');
+    try {
+      const result = await postJson<PublicDialogLinkResult>(`/admin/dialogs/${id}/test-link`);
+      setSelectedDialog(result.dialog);
+      showPublicLink(result.publicUrl, result.expiresAt);
+      await loadDialogs();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось создать ссылку для диалога');
+    }
+  }
+
+  async function saveAdminFeedback(id: string, feedback: string) {
+    setError('');
+    try {
+      const result = await putJson<DialogEntity>(`/admin/dialogs/${id}/feedback`, { feedback });
+      setSelectedDialog(result);
+      await loadDialogs();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить feedback');
+    }
+  }
+
   const columns: ColumnsType<AdminDialogListItem> = [
     {
       title: 'Обновлён',
@@ -613,6 +877,23 @@ function AdminPage(): JSX.Element {
       render: (value: number | null) => formatMoney(value)
     },
     {
+      title: 'Тест',
+      dataIndex: 'publicAccess',
+      width: 130,
+      render: (value: PublicAccessInfo | null) => {
+        if (!value) {
+          return <Tag>—</Tag>;
+        }
+        return <Tag color={value.isActive ? 'green' : 'orange'}>{value.isActive ? 'Активна' : 'Истекла'}</Tag>;
+      }
+    },
+    {
+      title: 'Feedback',
+      dataIndex: 'publicFeedback',
+      width: 120,
+      render: (value: PublicFeedbackInfo) => value?.text ? <Tag color="blue">Есть</Tag> : <Tag>—</Tag>
+    },
+    {
       title: '',
       key: 'actions',
       width: 190,
@@ -633,6 +914,9 @@ function AdminPage(): JSX.Element {
           subtitle="Открытая PoC CRM-панель"
           actions={(
             <>
+              <Button type="primary" onClick={() => void createTestDialogLink()}>
+                Создать тестовую ссылку
+              </Button>
               <Button href="/">Чат</Button>
               <Button onClick={() => void loadDialogs()}>Обновить</Button>
               <Button onClick={() => void logout()}>Выйти</Button>
@@ -703,6 +987,11 @@ function AdminPage(): JSX.Element {
             ) : selectedDialog ? (
               <>
                 <DialogStatusBar dialog={selectedDialog} />
+                <PublicAccessPanel
+                  dialog={selectedDialog}
+                  onCreateLink={() => createDialogTestLink(selectedDialog.id)}
+                  onSaveFeedback={(feedback) => saveAdminFeedback(selectedDialog.id, feedback)}
+                />
                 <ContextTabs
                   dialog={selectedDialog}
                   editable
@@ -719,6 +1008,82 @@ function AdminPage(): JSX.Element {
         </div>
       </section>
     </main>
+  );
+}
+
+function PublicAccessPanel(props: {
+  dialog: DialogEntity;
+  onCreateLink: () => Promise<void>;
+  onSaveFeedback: (feedback: string) => Promise<void>;
+}): JSX.Element {
+  const [feedback, setFeedback] = useState(props.dialog.publicFeedback.text ?? '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setFeedback(props.dialog.publicFeedback.text ?? '');
+  }, [props.dialog.id, props.dialog.publicFeedback.text]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await props.onSaveFeedback(feedback);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const access = props.dialog.publicAccess;
+  const publicUrl = access?.url ? normalizePublicUrl(access.url) : null;
+
+  return (
+    <section className="public-access-panel">
+      <div className="public-access-header">
+        <div>
+          <p className="eyebrow">Тестовая ссылка</p>
+          <h2>Публичный диалог</h2>
+        </div>
+        <Space>
+          {access ? <Tag color={access.isActive ? 'green' : 'orange'}>{access.isActive ? 'Активна' : 'Истекла'}</Tag> : <Tag>Нет ссылки</Tag>}
+          <Button onClick={() => void props.onCreateLink()}>{access ? 'Перегенерировать ссылку' : 'Создать ссылку'}</Button>
+        </Space>
+      </div>
+
+      <Descriptions bordered size="small" column={1}>
+        <Descriptions.Item label="URL">
+          {publicUrl ? (
+            <Input readOnly value={publicUrl} onFocus={(event) => event.currentTarget.select()} />
+          ) : '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Создана">
+          {access?.createdAt ? new Date(access.createdAt).toLocaleString('ru-RU') : '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Истекает">
+          {access?.expiresAt ? new Date(access.expiresAt).toLocaleString('ru-RU') : '—'}
+        </Descriptions.Item>
+      </Descriptions>
+
+      <div className="admin-feedback-editor">
+        <Input.TextArea
+          value={feedback}
+          maxLength={4000}
+          showCount
+          onChange={(event) => setFeedback(event.target.value)}
+          placeholder="Опишите свои впечатления от общения с ботом"
+          autoSize={{ minRows: 4, maxRows: 10 }}
+        />
+        <Space>
+          <Button type="primary" loading={saving} onClick={() => void save()}>
+            Сохранить feedback
+          </Button>
+          {props.dialog.publicFeedback.updatedAt ? (
+            <span className="muted-text">
+              Обновлено {new Date(props.dialog.publicFeedback.updatedAt).toLocaleString('ru-RU')}
+              {props.dialog.publicFeedback.updatedBy ? `, ${props.dialog.publicFeedback.updatedBy}` : ''}
+            </span>
+          ) : null}
+        </Space>
+      </div>
+    </section>
   );
 }
 

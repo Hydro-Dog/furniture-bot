@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import { UpdateFeedbackDto } from '../dialogs/dto/update-feedback.dto';
 import { DEFAULT_OPENAI_RATE_LIMIT } from '../rate-limit/constants/rate-limit.constants';
 import { RateLimit } from '../rate-limit/decorators/rate-limit.decorator';
 import { AdminService } from './admin.service';
@@ -20,6 +21,21 @@ export class AdminController {
   @Delete('dialogs/:id')
   deleteDialog(@Param('id') id: string) {
     return this.adminService.deleteDialog(id);
+  }
+
+  @Post('test-dialog-links')
+  createTestDialogLink() {
+    return this.adminService.createTestDialogLink();
+  }
+
+  @Post('dialogs/:id/test-link')
+  createDialogTestLink(@Param('id') id: string) {
+    return this.adminService.createDialogTestLink(id);
+  }
+
+  @Put('dialogs/:id/feedback')
+  updateFeedback(@Param('id') id: string, @Body() body: UpdateFeedbackDto) {
+    return this.adminService.updateFeedback(id, body.feedback);
   }
 
   @RateLimit(DEFAULT_OPENAI_RATE_LIMIT)

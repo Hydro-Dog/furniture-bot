@@ -5,6 +5,7 @@ export const DEFAULT_RATE_LIMIT_SCOPE = 'default';
 export const LOGIN_RATE_LIMIT_SCOPE = 'auth_login';
 export const OPENAI_RATE_LIMIT_SCOPE = 'openai';
 export const DIALOG_RATE_LIMIT_SCOPE = 'dialogs';
+export const PUBLIC_DIALOG_RATE_LIMIT_SCOPE = 'public_dialogs';
 
 export const DEFAULT_LOGIN_RATE_LIMIT = {
   limit: Number(process.env.RATE_LIMIT_LOGIN_MAX || 5),
@@ -20,4 +21,12 @@ export const DEFAULT_OPENAI_RATE_LIMIT = {
   cooldownMs: 60_000,
   keyMode: 'ip' as const,
   scope: OPENAI_RATE_LIMIT_SCOPE
+};
+
+export const DEFAULT_PUBLIC_DIALOG_MESSAGE_RATE_LIMIT = {
+  limit: Number(process.env.PUBLIC_DIALOG_RATE_LIMIT_MAX || 8),
+  windowMs: Number(process.env.PUBLIC_DIALOG_RATE_LIMIT_WINDOW_MS || 60_000),
+  cooldownMs: Number(process.env.PUBLIC_DIALOG_RATE_LIMIT_COOLDOWN_MS || 120_000),
+  keyMode: 'ip_public_token' as const,
+  scope: PUBLIC_DIALOG_RATE_LIMIT_SCOPE
 };

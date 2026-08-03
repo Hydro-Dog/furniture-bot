@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DialogsService } from '../dialogs/dialogs.service';
-import type { DialogEntity } from '../dialogs/dialog.types';
+import type { DialogEntity, PublicDialogLinkResult } from '../dialogs/dialog.types';
 
 @Injectable()
 export class AdminService {
@@ -14,6 +14,18 @@ export class AdminService {
   async deleteDialog(id: string): Promise<{ ok: true }> {
     await this.dialogsService.softDelete(id);
     return { ok: true };
+  }
+
+  createTestDialogLink(): Promise<PublicDialogLinkResult> {
+    return this.dialogsService.createWithPublicLink();
+  }
+
+  createDialogTestLink(id: string): Promise<PublicDialogLinkResult> {
+    return this.dialogsService.createPublicLink(id);
+  }
+
+  updateFeedback(id: string, feedback: string): Promise<DialogEntity> {
+    return this.dialogsService.updateFeedback(id, feedback, 'admin');
   }
 
   private toListItem(dialog: DialogEntity) {
@@ -34,6 +46,8 @@ export class AdminService {
         || this.getLastUserMessage(dialog),
       estimateTotal: estimate?.total ?? null,
       estimateComplete: estimate?.isComplete ?? false,
+      publicAccess: dialog.publicAccess,
+      publicFeedback: dialog.publicFeedback,
       createdAt: dialog.createdAt,
       updatedAt: dialog.updatedAt
     };
@@ -55,4 +69,3 @@ export class AdminService {
     return typeof value === 'string' && value.trim() ? value.trim() : null;
   }
 }
-
