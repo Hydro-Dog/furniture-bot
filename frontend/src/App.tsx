@@ -6,6 +6,7 @@ import {
   Descriptions,
   Input,
   InputNumber,
+  message,
   Modal,
   Space,
   Spin,
@@ -687,7 +688,6 @@ function PublicDialogPage(): JSX.Element {
           <section className="feedback-panel" aria-label="Feedback">
             <div>
               <p className="eyebrow">Feedback</p>
-              <h2>Впечатления от теста</h2>
             </div>
             <Input.TextArea
               value={feedback}
@@ -702,7 +702,7 @@ function PublicDialogPage(): JSX.Element {
             />
             <Space>
               <Button type="primary" loading={feedbackSaving} onClick={() => void saveFeedback()}>
-                Сохранить feedback
+                Сохранить
               </Button>
               {feedbackSaved ? <Tag color="green">Сохранено</Tag> : null}
             </Space>
@@ -790,14 +790,28 @@ function AdminPage(): JSX.Element {
     }
   }
 
-  function showPublicLink(url: string, expiresAt: string) {
+  async function showPublicLink(url: string, expiresAt: string) {
     const normalizedUrl = normalizePublicUrl(url);
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API is unavailable');
+      }
+      await navigator.clipboard.writeText(normalizedUrl);
+      message.success('Ссылка скопирована в буфер обмена');
+      return;
+    } catch {
+      message.warning('Не удалось скопировать ссылку автоматически');
+    }
+
     Modal.info({
-      title: 'Тестовая ссылка создана',
+      title: 'Скопируйте тестовую ссылку',
       width: 680,
       content: (
         <div className="modal-link-content">
-          <p>Ссылка действует 4 часа с момента создания, до {new Date(expiresAt).toLocaleString('ru-RU')}.</p>
+          <p>
+            Ссылка действует 4 часа с момента создания, до {new Date(expiresAt).toLocaleString('ru-RU')}.
+            Скопируйте её вручную.
+          </p>
           <Input readOnly value={normalizedUrl} onFocus={(event) => event.currentTarget.select()} />
         </div>
       )
@@ -809,7 +823,7 @@ function AdminPage(): JSX.Element {
     try {
       const result = await postJson<PublicDialogLinkResult>('/admin/test-dialog-links');
       setSelectedDialog(result.dialog);
-      showPublicLink(result.publicUrl, result.expiresAt);
+      await showPublicLink(result.publicUrl, result.expiresAt);
       await loadDialogs();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось создать тестовую ссылку');
@@ -821,7 +835,7 @@ function AdminPage(): JSX.Element {
     try {
       const result = await postJson<PublicDialogLinkResult>(`/admin/dialogs/${id}/test-link`);
       setSelectedDialog(result.dialog);
-      showPublicLink(result.publicUrl, result.expiresAt);
+      await showPublicLink(result.publicUrl, result.expiresAt);
       await loadDialogs();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось создать ссылку для диалога');
@@ -899,8 +913,25 @@ function AdminPage(): JSX.Element {
       width: 190,
       render: (_, record) => (
         <Space>
-          <Button size="small" onClick={() => void openDialog(record.id)}>Открыть</Button>
-          <Button size="small" danger onClick={() => void deleteDialog(record.id)}>Удалить</Button>
+          <Button
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation();
+              void openDialog(record.id);
+            }}
+          >
+            Открыть
+          </Button>
+          <Button
+            size="small"
+            danger
+            onClick={(event) => {
+              event.stopPropagation();
+              void deleteDialog(record.id);
+            }}
+          >
+            Удалить
+          </Button>
         </Space>
       )
     }
@@ -911,13 +942,11 @@ function AdminPage(): JSX.Element {
       <section className="workspace">
         <Header
           title="Админка диалогов"
-          subtitle="Открытая PoC CRM-панель"
           actions={(
             <>
               <Button type="primary" onClick={() => void createTestDialogLink()}>
                 Создать тестовую ссылку
               </Button>
-              <Button href="/">Чат</Button>
               <Button onClick={() => void loadDialogs()}>Обновить</Button>
               <Button onClick={() => void logout()}>Выйти</Button>
             </>
@@ -977,7 +1006,13 @@ function AdminPage(): JSX.Element {
               pagination={{ pageSize: 10 }}
               size="middle"
               onRow={(record) => ({
-                onDoubleClick: () => void openDialog(record.id)
+                onClick: (event) => {
+                  const target = event.target as HTMLElement;
+                  if (target.closest('button,a,input,.ant-checkbox,.ant-checkbox-wrapper')) {
+                    return;
+                  }
+                  void openDialog(record.id);
+                }
               })}
             />
           </section>
@@ -1073,7 +1108,7 @@ function PublicAccessPanel(props: {
         />
         <Space>
           <Button type="primary" loading={saving} onClick={() => void save()}>
-            Сохранить feedback
+            Сохранить
           </Button>
           {props.dialog.publicFeedback.updatedAt ? (
             <span className="muted-text">
@@ -1089,13 +1124,13 @@ function PublicAccessPanel(props: {
 
 function Header(props: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   actions: JSX.Element;
 }): JSX.Element {
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">{props.subtitle}</p>
+        {props.subtitle ? <p className="eyebrow">{props.subtitle}</p> : null}
         <h1>{props.title}</h1>
       </div>
       <div className="topbar-actions">{props.actions}</div>
