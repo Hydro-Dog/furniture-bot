@@ -146,3 +146,23 @@ docker compose up --build
 - админка: `http://localhost:5173/admin`
 
 Для работы нужно заполнить `.env`: `OPENAI_API_KEY`, данные Postgres, логин и пароль администратора.
+
+## OpenAI через proxy на VPS
+
+Если сервер не может напрямую обращаться к OpenAI API, включите outbound proxy в `.env`:
+
+```env
+OUTBOUND_PROXY_ENABLED=true
+OUTBOUND_PROXY_URL=http://proxy_user:proxy_password@10.77.77.1:3128
+OUTBOUND_PROXY_NO_PROXY=localhost,127.0.0.1,postgres,backend,frontend
+OUTBOUND_PROXY_TIMEOUT_MS=30000
+OPENAI_USE_PROXY=true
+```
+
+После изменения `.env` перезапустите backend или весь Docker Compose.
+
+Если proxy не нужен, оставьте:
+
+```env
+OUTBOUND_PROXY_ENABLED=false
+```
