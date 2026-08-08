@@ -6,7 +6,7 @@ export function createEmptyDialogContext(): DialogContext {
       {
         role: 'assistant',
         content:
-          'Здравствуйте! Я виртуальный консультант салона мебели. Помогу разобраться с вашим заказом и передам детали дизайнеру. Как к вам обращаться?',
+          'Здравствуйте! Я ИИ-консультант салона мебели на заказ. Помогу быстро собрать вводные по вашему проекту и передать их специалисту. Как к вам можно обращаться?',
         createdAt: new Date().toISOString()
       }
     ],
@@ -42,4 +42,3 @@ export function normalizeDialogContext(context: Partial<DialogContext> | null): 
     }
   };
 }
-

@@ -4,6 +4,7 @@ import { UpdateFeedbackDto } from '../dialogs/dto/update-feedback.dto';
 import { AuthUser } from '../auth/types/auth.types';
 import { UpdateMainPromptDto } from '../prompts/dto/update-main-prompt.dto';
 import { PromptConfigService } from '../prompts/prompt-config.service';
+import { AppPromptKey } from '../prompts/prompt.types';
 import { DEFAULT_OPENAI_RATE_LIMIT } from '../rate-limit/constants/rate-limit.constants';
 import { RateLimit } from '../rate-limit/decorators/rate-limit.decorator';
 import { AdminService } from './admin.service';
@@ -48,12 +49,30 @@ export class AdminController {
     return this.promptConfigService.getMainChatIntakePrompt();
   }
 
+  @Get('prompts')
+  listPrompts() {
+    return this.promptConfigService.listPrompts();
+  }
+
   @Put('prompts/main-chat-intake')
   updateMainChatIntakePrompt(
     @Body() body: UpdateMainPromptDto,
     @Req() request: Request & { user?: AuthUser }
   ) {
     return this.promptConfigService.updateMainChatIntakePrompt(
+      body.content,
+      request.user?.username ?? 'admin'
+    );
+  }
+
+  @Put('prompts/:key')
+  updatePrompt(
+    @Param('key') key: AppPromptKey,
+    @Body() body: UpdateMainPromptDto,
+    @Req() request: Request & { user?: AuthUser }
+  ) {
+    return this.promptConfigService.updatePrompt(
+      key,
       body.content,
       request.user?.username ?? 'admin'
     );

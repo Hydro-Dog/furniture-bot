@@ -6,50 +6,22 @@ import type {
   SpecificationContext,
   SpecificationRow
 } from '../dialogs/dialog.types';
+import { PromptConfigService } from '../prompts/prompt-config.service';
 import { parseAiJsonAndSummary } from '../workflow/json-extract.utils';
-
-export const SPECIFICATION_PROMPT = `
-Ты — технолог корпусной мебели.
-На основе профайла и технического ТЗ составь черновую спецификацию в формате JSON.
-Не делай раскрой и не выдумывай точные детали, если данных мало. Лучше добавь укрупненные позиции.
-Если в данных уже есть тип дверей, наполнение или особенности монтажа, включай их в черновую спецификацию отдельными строками.
-Для шкафа в коридор с распашными дверями добавляй хотя бы базовые элементы: корпус, двери, штанга, полки, ящики, крепеж/фурнитура, отдельные позиции под особенности монтажа.
-При недостатке данных можно оставлять укрупненные позиции, но нельзя игнорировать уже известные элементы.
-Не добавляй конкретные элементы наполнения, если клиент их не называл, кроме минимально необходимого каркаса. Если известны коммуникации или доступ к ним, добавь отдельную строку/заметку в спецификацию как монтажное ограничение.
-Если клиент не называл наполнение, не добавляй конкретные элементы хранения как будто они согласованы. Разрешен только минимальный каркас: корпус, фасады, базовая фурнитура, монтажные ограничения.
-Дополнительные элементы помечай как optional или assumption в notes/source и снижай confidence.
-Верни строго JSON без markdown:
-{
-  "rows": [
-    {
-      "section": "Корпус",
-      "itemType": "panel",
-      "name": "Боковина шкафа",
-      "material": "ЛДСП 16 мм",
-      "lengthMm": null,
-      "widthMm": null,
-      "thicknessMm": 16,
-      "quantity": 1,
-      "edgeBanding": null,
-      "unit": "pcs",
-      "notes": null,
-      "source": "ai_draft",
-      "confidence": 0.4
-    }
-  ]
-}
-`.trim();
 
 @Injectable()
 export class SpecificationService {
-  constructor(private readonly openAiClientService: OpenAiClientService) {}
+  constructor(
+    private readonly openAiClientService: OpenAiClientService,
+    private readonly promptConfigService: PromptConfigService
+  ) {}
 
   async generateSpecification(context: DialogContext): Promise<SpecificationContext> {
     const raw = await this.openAiClientService.createTextResponse({
       messages: [
         {
           role: 'system',
-          content: SPECIFICATION_PROMPT
+          content: await this.promptConfigService.getSpecificationPromptContent()
         },
         {
           role: 'user',

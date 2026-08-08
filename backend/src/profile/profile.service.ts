@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { OpenAiClientService } from '../llm/openai-client.service';
 import type { ChatMessage, ProfileContext } from '../dialogs/dialog.types';
-import { CLIENT_PROFILE_PROMPT } from '../chat-intake/prompts';
+import { PromptConfigService } from '../prompts/prompt-config.service';
 import { parseAiJsonAndSummary } from '../workflow/json-extract.utils';
 
 @Injectable()
 export class ProfileService {
-  constructor(private readonly openAiClientService: OpenAiClientService) {}
+  constructor(
+    private readonly openAiClientService: OpenAiClientService,
+    private readonly promptConfigService: PromptConfigService
+  ) {}
 
   async buildProfile(messages: ChatMessage[]): Promise<ProfileContext> {
     const transcript = messages
@@ -17,7 +20,7 @@ export class ProfileService {
       messages: [
         {
           role: 'system',
-          content: CLIENT_PROFILE_PROMPT
+          content: await this.promptConfigService.getClientProfilePromptContent()
         },
         {
           role: 'user',
@@ -25,7 +28,7 @@ export class ProfileService {
         }
       ],
       temperature: 0.2,
-      maxOutputTokens: 1800
+      maxOutputTokens: 3200
     });
 
     const parsed = parseAiJsonAndSummary(raw);

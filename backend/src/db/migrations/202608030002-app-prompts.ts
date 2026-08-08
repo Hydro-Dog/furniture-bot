@@ -1,5 +1,5 @@
 import { QueryTypes } from 'sequelize';
-import { FIRST_CONTACT_SYSTEM_PROMPT } from '../../chat-intake/prompts';
+import { FIRST_CONTACT_SYSTEM_PROMPT } from '../../prompts/prompt-samples';
 import { MigrationHandler } from '../migration.types';
 
 export const up: MigrationHandler = async ({ context: queryInterface }) => {

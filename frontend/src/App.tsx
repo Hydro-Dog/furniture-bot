@@ -161,6 +161,10 @@ interface PromptDebugReview {
 
 interface AppPromptEntity {
   key: string;
+  title?: string;
+  pipelineStep?: string;
+  usage?: string;
+  order?: number;
   content: string;
   updatedBy: string | null;
   createdAt: string;
@@ -1077,8 +1081,9 @@ function AdminPage(): JSX.Element {
 }
 
 function PromptVaultPage(): JSX.Element {
-  const [prompt, setPrompt] = useState<AppPromptEntity | null>(null);
-  const [draft, setDraft] = useState('');
+  const [prompts, setPrompts] = useState<AppPromptEntity[]>([]);
+  const [selectedKey, setSelectedKey] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1094,25 +1099,43 @@ function PromptVaultPage(): JSX.Element {
     setSaved(false);
 
     try {
-      const result = await requestJson<AppPromptEntity>('/admin/prompts/main-chat-intake');
-      setPrompt(result);
-      setDraft(result.content);
+      const result = await requestJson<AppPromptEntity[]>('/admin/prompts');
+      setPrompts(result);
+      setDrafts(Object.fromEntries(result.map((prompt) => [prompt.key, prompt.content])));
+      setSelectedKey((currentKey) => (
+        currentKey && result.some((prompt) => prompt.key === currentKey)
+          ? currentKey
+          : result[0]?.key ?? ''
+      ));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить prompt');
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить prompt’ы');
     } finally {
       setLoading(false);
     }
   }
 
   async function savePrompt() {
+    const selectedPrompt = prompts.find((item) => item.key === selectedKey);
+    if (!selectedPrompt) {
+      return;
+    }
+
     setSaving(true);
     setError('');
     setSaved(false);
 
     try {
-      const result = await putJson<AppPromptEntity>('/admin/prompts/main-chat-intake', { content: draft });
-      setPrompt(result);
-      setDraft(result.content);
+      const result = await putJson<AppPromptEntity>(
+        `/admin/prompts/${encodeURIComponent(selectedPrompt.key)}`,
+        { content: drafts[selectedPrompt.key] ?? '' }
+      );
+      setPrompts((currentPrompts) => currentPrompts.map((prompt) => (
+        prompt.key === result.key ? result : prompt
+      )));
+      setDrafts((currentDrafts) => ({
+        ...currentDrafts,
+        [result.key]: result.content
+      }));
       setSaved(true);
       message.success('Prompt сохранён');
     } catch (requestError) {
@@ -1122,14 +1145,16 @@ function PromptVaultPage(): JSX.Element {
     }
   }
 
-  const hasChanges = Boolean(prompt && draft !== prompt.content);
+  const selectedPrompt = prompts.find((prompt) => prompt.key === selectedKey) ?? null;
+  const selectedDraft = selectedPrompt ? drafts[selectedPrompt.key] ?? '' : '';
+  const hasChanges = Boolean(selectedPrompt && selectedDraft !== selectedPrompt.content);
 
   return (
     <main className="app-shell admin-shell">
       <section className="workspace prompt-vault-workspace">
         <Header
-          title="Редактор основного prompt’а"
-          subtitle="Текст ниже используется как system prompt в первом клиентском диалоге"
+          title="Редактор prompt’ов"
+          subtitle="Prompt’ы сгруппированы по шагам pipeline"
           actions={(
             <>
               <Button href="/admin">Админка</Button>
@@ -1146,46 +1171,85 @@ function PromptVaultPage(): JSX.Element {
             <div className="center-state"><Spin /></div>
           ) : (
             <>
-              {prompt ? (
-                <Descriptions bordered size="small" column={3}>
-                  <Descriptions.Item label="Ключ">{prompt.key}</Descriptions.Item>
-                  <Descriptions.Item label="Обновил">{prompt.updatedBy || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Обновлён">
-                    {new Date(prompt.updatedAt).toLocaleString('ru-RU')}
-                  </Descriptions.Item>
-                </Descriptions>
-              ) : null}
-
-              <Input.TextArea
-                value={draft}
-                showCount
-                maxLength={50000}
-                onChange={(event) => {
-                  setDraft(event.target.value);
+              <Tabs
+                activeKey={selectedKey}
+                onChange={(key) => {
+                  setSelectedKey(key);
                   setSaved(false);
                 }}
-                autoSize={{ minRows: 24, maxRows: 36 }}
+                items={prompts.map((prompt) => ({
+                  key: prompt.key,
+                  label: prompt.pipelineStep || prompt.key
+                }))}
               />
 
-              <div className="prompt-editor-actions">
-                <Space>
-                  <Button
-                    type="primary"
-                    loading={saving}
-                    disabled={!draft.trim() || !hasChanges}
-                    onClick={() => void savePrompt()}
-                  >
-                    Сохранить
-                  </Button>
-                  <Button disabled={!hasChanges || saving} onClick={() => setDraft(prompt?.content ?? '')}>
-                    Отменить изменения
-                  </Button>
-                </Space>
-                <Space>
-                  {hasChanges ? <Tag color="orange">Есть несохранённые изменения</Tag> : null}
-                  {saved ? <Tag color="green">Сохранено</Tag> : null}
-                </Space>
-              </div>
+              {selectedPrompt ? (
+                <>
+                  <Descriptions bordered size="small" column={2}>
+                    <Descriptions.Item label="Шаг pipeline">
+                      {selectedPrompt.pipelineStep || '—'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Ключ">{selectedPrompt.key}</Descriptions.Item>
+                    <Descriptions.Item label="Название">
+                      {selectedPrompt.title || '—'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Обновил">
+                      {selectedPrompt.updatedBy || '—'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Где используется" span={2}>
+                      {selectedPrompt.usage || '—'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Обновлён" span={2}>
+                      {new Date(selectedPrompt.updatedAt).toLocaleString('ru-RU')}
+                    </Descriptions.Item>
+                  </Descriptions>
+
+                  <Input.TextArea
+                    value={selectedDraft}
+                    showCount
+                    maxLength={50000}
+                    onChange={(event) => {
+                      setDrafts((currentDrafts) => ({
+                        ...currentDrafts,
+                        [selectedPrompt.key]: event.target.value
+                      }));
+                      setSaved(false);
+                    }}
+                    autoSize={{ minRows: 24, maxRows: 36 }}
+                  />
+
+                  <div className="prompt-editor-actions">
+                    <Space>
+                      <Button
+                        type="primary"
+                        loading={saving}
+                        disabled={!selectedDraft.trim() || !hasChanges}
+                        onClick={() => void savePrompt()}
+                      >
+                        Сохранить
+                      </Button>
+                      <Button
+                        disabled={!hasChanges || saving}
+                        onClick={() => {
+                          setDrafts((currentDrafts) => ({
+                            ...currentDrafts,
+                            [selectedPrompt.key]: selectedPrompt.content
+                          }));
+                          setSaved(false);
+                        }}
+                      >
+                        Отменить изменения
+                      </Button>
+                    </Space>
+                    <Space>
+                      {hasChanges ? <Tag color="orange">Есть несохранённые изменения</Tag> : null}
+                      {saved ? <Tag color="green">Сохранено</Tag> : null}
+                    </Space>
+                  </div>
+                </>
+              ) : (
+                <div className="profile-empty">Prompt’ы не найдены.</div>
+              )}
             </>
           )}
         </section>
